@@ -1,0 +1,14 @@
+{
+  "name": "agent-hub-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Agent Hub web app with real user authentication and cross-device persistence.",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs"
+  },
+  "engines": {
+    "node": ">=18.17"
+  }
+}
