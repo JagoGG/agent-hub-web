@@ -14,6 +14,8 @@ const COOKIE_NAME = 'ah_session';
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_PAYLOAD_BYTES = 120 * 1024;
 const IS_PROD = process.env.NODE_ENV === 'production';
+const APP_VERSION = '1.18.0';
+const APP_STARTED_AT = new Date().toISOString();
 
 const MIME_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -73,8 +75,17 @@ function headersBase() {
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Resource-Policy': 'same-origin',
     'Cross-Origin-Embedder-Policy': 'require-corp',
+    'X-App-Version': APP_VERSION,
     'Content-Security-Policy':
       "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; frame-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self';",
+  };
+}
+
+function staticHeaders(extra = {}) {
+  return {
+    ...headersBase(),
+    ...extra,
+    'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
   };
 }
 
@@ -395,6 +406,17 @@ async function handleApi(req, res, method, pathName, url) {
 
   if (segments.length === 1 && segments[0] === 'health' && method === 'GET') {
     sendJson(res, 200, { ok: true, now: new Date().toISOString() });
+    return;
+  }
+
+  if (segments.length === 1 && segments[0] === 'version' && method === 'GET') {
+    sendJson(res, 200, {
+      ok: true,
+      app: 'agent-hub-web',
+      version: APP_VERSION,
+      startedAt: APP_STARTED_AT,
+      now: new Date().toISOString(),
+    });
     return;
   }
 
@@ -872,7 +894,7 @@ async function serveStaticOrFallback(req, res, pathname) {
       const ext = path.extname(normalized).toLowerCase();
       const body = await readFile(normalized);
       res.writeHead(200, {
-        ...headersBase(),
+        ...staticHeaders(),
         'Content-Type': MIME_TYPES.get(ext) || 'application/octet-stream',
         'Content-Length': Buffer.byteLength(body),
       });
@@ -885,11 +907,13 @@ async function serveStaticOrFallback(req, res, pathname) {
 
   if (req.method === 'GET' || req.method === 'HEAD') {
     try {
-      const indexBody = await readFile(path.join(ROOT_DIR, 'index.html'));
+      const indexHtml = await readFile(path.join(ROOT_DIR, 'index.html'), 'utf8');
+      const indexBody = indexHtml
+        .replaceAll('__APP_VERSION__', APP_VERSION);
       res.writeHead(200, {
-        ...headersBase(),
+        ...staticHeaders(),
         'Content-Type': 'text/html; charset=utf-8',
-        'Content-Length': indexBody.length,
+        'Content-Length': Buffer.byteLength(indexBody),
       });
       res.end(indexBody);
       return;
