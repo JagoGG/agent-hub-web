@@ -65,6 +65,16 @@ select {
   box-shadow: 0 14px 40px rgba(2, 6, 23, 0.45);
 }
 
+.version-badge {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  border-radius: 999px;
+}
+
 .auth-wrap {
   max-width: 560px;
   margin: 30px auto;
