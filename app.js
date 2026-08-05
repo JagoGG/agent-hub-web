@@ -9,6 +9,8 @@ const state = {
   messages: [],
   selectedAgentId: null,
   selectedConversationId: null,
+  appVersion: 'v1.18.0',
+  appStartedAt: '',
   feedback: '',
 };
 
@@ -84,8 +86,20 @@ async function apiFetch(path, options = {}) {
 }
 
 async function boot() {
+  await hydrateAppInfo();
   await hydrateSession();
   setLoading(false);
+}
+
+async function hydrateAppInfo() {
+  try {
+    const info = await apiFetch('/api/version');
+    const version = String(info.version || state.appVersion || 'desconocido');
+    state.appVersion = version.toLowerCase().startsWith('v') ? version : `v${version}`;
+    state.appStartedAt = String(info.startedAt || '');
+  } catch {
+    state.appVersion = 'desconocido';
+  }
 }
 
 async function hydrateSession() {
@@ -139,11 +153,13 @@ function render() {
 }
 
 function renderAuth() {
+  const versionText = escapeHtml(state.appVersion);
   return `
     <section class="app-shell">
       <section class="auth-wrap">
         <article class="card">
           <h1>Agent Hub</h1>
+          <div class="version-badge" aria-label="Versión">v${versionText}</div>
           <p class="subtitle">Gestiona tus agentes y conversaciones desde cualquier dispositivo.</p>
           <div class="tabs">
             <button class="tab ${state.mode === 'login' ? 'active' : ''}" id="tab-login" type="button">Iniciar sesión</button>
@@ -179,6 +195,7 @@ function renderAuth() {
 }
 
 function renderDashboard() {
+  const versionText = escapeHtml(state.appVersion);
   const agentMarkup = state.agents
     .map((agent) => {
       const selected = agent.id === state.selectedAgentId ? ' selected' : '';
@@ -212,11 +229,11 @@ function renderDashboard() {
 
   return `
     <section class="app-shell">
-      <header class="topbar">
-        <div>
-          <h1>Agent Hub</h1>
-          <small>${escapeHtml(state.user.email)} · ${escapeHtml(state.user.name)}</small>
-        </div>
+        <header class="topbar">
+          <div>
+            <h1>Agent Hub</h1>
+            <small>${escapeHtml(state.user.email)} · ${escapeHtml(state.user.name)} · v${versionText}</small>
+          </div>
         <button id="logout-button" type="button">Cerrar sesión</button>
       </header>
 
