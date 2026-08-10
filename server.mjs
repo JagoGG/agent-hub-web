@@ -326,7 +326,12 @@ function hashesMatch(leftHex, rightHex) {
 }
 
 function safeUser(user) {
-  return { id: user.id, email: user.email, createdAt: user.createdAt };
+  return {
+    id: user.id,
+    name: user.name || String(user.email || '').split('@')[0],
+    email: user.email,
+    createdAt: user.createdAt,
+  };
 }
 
 function owns(record, userId) {
@@ -397,6 +402,7 @@ async function handleApi(req, res, pathname) {
     }
 
     const body = await readJsonBody(req);
+    const name = text(body.name, 80);
     const email = normalizeEmail(body.email);
     const password = String(body.password || '');
     if (!email) return sendJson(res, 400, { error: 'Escribe un correo valido.' });
@@ -421,6 +427,7 @@ async function handleApi(req, res, pathname) {
       }
       const created = {
         id: nextId(draft, 'user'),
+        name: name || email.split('@')[0],
         email,
         passwordHash,
         passwordSalt: salt,
@@ -506,6 +513,8 @@ async function handleApi(req, res, pathname) {
     if (!user) return;
     const body = await readJsonBody(req);
     const name = text(body.name, 80);
+    const model = text(body.model, 60) || 'gpt-4o-mini';
+    const instructions = text(body.instructions, 2_000);
     const description = text(body.description, 600);
     const url = normalizeUrl(body.url);
     if (!name) return sendJson(res, 400, { error: 'El agente necesita un nombre.' });
@@ -517,6 +526,8 @@ async function handleApi(req, res, pathname) {
         id: nextId(draft, 'agent'),
         userId: user.id,
         name,
+        model,
+        instructions,
         description,
         category: text(body.category, 80),
         status: text(body.status, 32) || 'active',
@@ -537,14 +548,18 @@ async function handleApi(req, res, pathname) {
     if (!user) return;
     const body = await readJsonBody(req);
     const name = body.name === undefined ? undefined : text(body.name, 80);
+    const model = body.model === undefined ? undefined : text(body.model, 60);
     const url = body.url === undefined ? undefined : normalizeUrl(body.url);
     if (name === '') return sendJson(res, 400, { error: 'El agente necesita un nombre.' });
+    if (model === '') return sendJson(res, 400, { error: 'El agente necesita un modelo.' });
     if (url === null) return sendJson(res, 400, { error: 'La URL debe usar http o https.' });
 
     const agent = await mutateState((draft) => {
       const stored = draft.agents.find((item) => Number(item.id) === agentId && owns(item, user.id));
       if (!stored) return null;
       if (name !== undefined) stored.name = name;
+      if (model !== undefined) stored.model = model;
+      if (body.instructions !== undefined) stored.instructions = text(body.instructions, 2_000);
       if (body.description !== undefined) stored.description = text(body.description, 600);
       if (body.category !== undefined) stored.category = text(body.category, 80);
       if (body.status !== undefined) stored.status = text(body.status, 32) || 'active';
@@ -709,7 +724,7 @@ async function handleStatic(req, res, pathname) {
   }
 
   const requestedFile = publicPath === '/' ? '/index.html' : publicPath;
-  const isAsset = requestedFile.startsWith('/assets/') && !requestedFile.includes('/.');
+  const isAsset = ['/assets/', '/brand/'].some((prefix) => requestedFile.startsWith(prefix)) && !requestedFile.includes('/.');
   if (!PUBLIC_FILES.has(requestedFile) && !isAsset) {
     if (extname(requestedFile)) {
       await serveFile(req, res, join(ROOT, '404.html'), 404);

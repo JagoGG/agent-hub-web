@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const PACKAGE = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8'));
 
 async function startServer(dataFile) {
   const child = spawn(process.execPath, ['server.mjs'], {
@@ -52,18 +53,23 @@ async function jsonRequest(baseUrl, pathname, options = {}) {
 }
 
 test('el portal estatico usa rutas desplegables y una composicion HyperFrames valida', async () => {
-  const [index, app, composition, timeline, packageJson] = await Promise.all([
+  const [index, app, styles, composition, timeline] = await Promise.all([
     readFile(join(ROOT, 'index.html'), 'utf8'),
     readFile(join(ROOT, 'app.js'), 'utf8'),
+    readFile(join(ROOT, 'styles.css'), 'utf8'),
     readFile(join(ROOT, 'assets', 'hyperframes-showcase.html'), 'utf8'),
     readFile(join(ROOT, 'assets', 'hyperframes-showcase.js'), 'utf8'),
-    readFile(join(ROOT, 'package.json'), 'utf8'),
   ]);
-  const pkg = JSON.parse(packageJson);
 
   assert.doesNotMatch(index, /__APP_VERSION__|(?:href|src)="\/(?:styles\.css|app\.js)/);
-  assert.match(index, new RegExp(`app\\.js\\?v=${pkg.version.replaceAll('.', '\\.')}"`));
+  assert.match(index, new RegExp(`app\\.js\\?v=${PACKAGE.version.replaceAll('.', '\\.')}"`));
   assert.match(app, /new URL\('\.\/api\/', document\.baseURI\)/);
+  assert.match(app, /payload\?\.agents/);
+  assert.match(app, /payload\?\.conversations/);
+  assert.match(app, /agents\/\$\{state\.selectedAgentId\}\/conversations/);
+  assert.match(app, /class="signal-graph"/);
+  assert.doesNotMatch(app, /class="map-connector"/);
+  assert.match(styles, /\.graph-link/);
   assert.match(composition, /data-composition-id="agent-hub-showcase"/);
   assert.match(composition, /data-start-time="0"/);
   assert.match(composition, /hyperframes-showcase\.js/);
@@ -80,7 +86,7 @@ test('la API protege datos, sesiones, tipos de contenido y recursos entre cuenta
   try {
     const version = await jsonRequest(running.baseUrl, '/api/version');
     assert.equal(version.response.status, 200);
-    assert.equal(version.payload.version, '1.19.0');
+    assert.equal(version.payload.version, PACKAGE.version);
 
     const head = await fetch(`${running.baseUrl}/styles.css`, { method: 'HEAD' });
     assert.equal(head.status, 200);
@@ -89,6 +95,10 @@ test('la API protege datos, sesiones, tipos de contenido y recursos entre cuenta
     const font = await fetch(`${running.baseUrl}/assets/hanken-grotesk-latin-400-normal-BG6hkEXj.woff2`);
     assert.equal(font.status, 200);
     assert.equal(font.headers.get('content-type'), 'font/woff2');
+
+    const brandMark = await fetch(`${running.baseUrl}/brand/agent-hub-isotype.png`);
+    assert.equal(brandMark.status, 200);
+    assert.equal(brandMark.headers.get('content-type'), 'image/png');
 
     const privateData = await jsonRequest(running.baseUrl, '/data/db.json');
     assert.equal(privateData.response.status, 403);
@@ -109,17 +119,24 @@ test('la API protege datos, sesiones, tipos de contenido y recursos entre cuenta
     const firstRegistration = await jsonRequest(running.baseUrl, '/api/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'one@example.com', password: 'correct-horse-battery' }),
+      body: JSON.stringify({ name: 'Usuario Uno', email: 'one@example.com', password: 'correct-horse-battery' }),
     });
     assert.equal(firstRegistration.response.status, 201);
+    assert.equal(firstRegistration.payload.user.name, 'Usuario Uno');
     const firstCookie = firstRegistration.response.headers.get('set-cookie').split(';')[0];
 
     const agentResult = await jsonRequest(running.baseUrl, '/api/agents', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: firstCookie },
-      body: JSON.stringify({ name: 'Research Scout', description: 'Busca evidencia', category: 'Research' }),
+      body: JSON.stringify({ name: 'Research Scout', model: 'gpt-5', instructions: 'Busca evidencia primaria', description: 'Busca evidencia', category: 'Research' }),
     });
     assert.equal(agentResult.response.status, 201);
+    assert.equal(agentResult.payload.agent.model, 'gpt-5');
+    assert.equal(agentResult.payload.agent.instructions, 'Busca evidencia primaria');
+
+    const agentsResult = await jsonRequest(running.baseUrl, '/api/agents', { headers: { Cookie: firstCookie } });
+    assert.equal(agentsResult.response.status, 200);
+    assert.equal(agentsResult.payload.agents[0].model, 'gpt-5');
 
     const conversationResult = await jsonRequest(running.baseUrl, `/api/agents/${agentResult.payload.agent.id}/conversations`, {
       method: 'POST',
