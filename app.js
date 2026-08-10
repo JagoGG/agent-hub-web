@@ -8,7 +8,7 @@ const API_BASE = new URL('./api/', document.baseURI);
 const REPOSITORY_URL = 'https://github.com/JagoGG/agent-hub-web';
 const HYPERFRAMES_URL = 'https://github.com/heygen-com/hyperframes';
 const metaVersion =
-  document.querySelector('meta[name="app-version"]')?.getAttribute('content') || '1.19.0';
+  document.querySelector('meta[name="app-version"]')?.getAttribute('content') || '1.20.0';
 
 const state = {
   loading: true,
@@ -206,8 +206,8 @@ async function hydrateSession() {
 
 async function loadAgents() {
   const previousAgentId = state.selectedAgentId;
-  const agents = await apiFetch('agents');
-  state.agents = Array.isArray(agents) ? agents : [];
+  const payload = await apiFetch('agents');
+  state.agents = Array.isArray(payload?.agents) ? payload.agents : [];
   state.selectedAgentId = state.agents.some((agent) => agent.id === previousAgentId)
     ? previousAgentId
     : state.agents[0]?.id || null;
@@ -223,8 +223,8 @@ async function loadAgents() {
 
 async function loadConversationsForAgent(agentId) {
   const previousConversationId = state.selectedConversationId;
-  const conversations = await apiFetch(`agents/${agentId}/conversations`);
-  state.conversations = Array.isArray(conversations) ? conversations : [];
+  const payload = await apiFetch(`agents/${agentId}/conversations`);
+  state.conversations = Array.isArray(payload?.conversations) ? payload.conversations : [];
   state.selectedConversationId = state.conversations.some(
     (conversation) => conversation.id === previousConversationId,
   )
@@ -295,6 +295,7 @@ function renderPortal() {
   const statusLabel = backendOnline ? 'Servidor operativo' : 'Preview publico';
   const primaryHref = backendOnline ? '#access' : '#experience';
   const primaryLabel = backendOnline ? 'Entrar al workspace' : 'Ver la experiencia';
+  const graphStatusLabel = backendOnline ? 'API ONLINE' : 'STATIC READY';
 
   return `
     <main class="public-shell">
@@ -344,30 +345,53 @@ function renderPortal() {
           </dl>
         </div>
 
-        <aside class="system-map" aria-label="Mapa del flujo de Agent Hub">
-          <div class="map-header">
-            <span>LIVE SYSTEM MAP</span>
-            <span>03 NODES</span>
+        <figure class="signal-graph" aria-labelledby="signal-graph-title">
+          <figcaption class="graph-header">
+            <span id="signal-graph-title">LIVE CONTINUITY GRAPH</span>
+            <span><i aria-hidden="true"></i>${graphStatusLabel}</span>
+          </figcaption>
+          <div class="graph-canvas">
+            <svg class="graph-links" viewBox="0 0 520 400" aria-hidden="true">
+              <circle class="graph-orbit" cx="260" cy="200" r="104"></circle>
+              <path class="graph-link graph-link-a" d="M260 200 C218 158 168 112 92 72"></path>
+              <path class="graph-link graph-link-b" d="M260 200 C302 158 352 112 428 72"></path>
+              <path class="graph-link graph-link-c" d="M260 200 C302 242 352 288 428 328"></path>
+              <path class="graph-link graph-link-d" d="M260 200 C218 242 168 288 92 328"></path>
+            </svg>
+            <div class="graph-core">
+              <span>AH / 00</span>
+              <strong>Agent Hub</strong>
+              <small>Continuidad central</small>
+              <i>${backendOnline ? 'LIVE' : 'DEMO'}</i>
+            </div>
+            <article class="graph-node graph-node-agent">
+              <span>01 / IDENTITY</span>
+              <strong>Agentes</strong>
+              <small>Modelo + reglas</small>
+            </article>
+            <article class="graph-node graph-node-thread">
+              <span>02 / THREADS</span>
+              <strong>Conversaciones</strong>
+              <small>Contexto por agente</small>
+            </article>
+            <article class="graph-node graph-node-message">
+              <span>03 / SIGNAL</span>
+              <strong>Mensajes</strong>
+              <small>Secuencia ordenada</small>
+            </article>
+            <article class="graph-node graph-node-memory">
+              <span>04 / MEMORY</span>
+              <strong>Continuidad</strong>
+              <small>Estado persistente</small>
+            </article>
           </div>
-          <div class="map-node map-node-agent">
-            <span class="node-index">01</span>
-            <div><strong>Agentes</strong><small>Modelo + instrucciones</small></div>
-            <span class="node-state">READY</span>
+          <div class="graph-readout" aria-label="Estado del sistema">
+            <span><i aria-hidden="true"></i> 04 nodos</span>
+            <span><i aria-hidden="true"></i> 04 rutas</span>
+            <span><i aria-hidden="true"></i> 01 contexto</span>
           </div>
-          <div class="map-connector" aria-hidden="true"><span></span></div>
-          <div class="map-node map-node-conversation">
-            <span class="node-index">02</span>
-            <div><strong>Conversaciones</strong><small>Hilos por agente</small></div>
-            <span class="node-state">SYNC</span>
-          </div>
-          <div class="map-connector" aria-hidden="true"><span></span></div>
-          <div class="map-node map-node-memory">
-            <span class="node-index">03</span>
-            <div><strong>Continuidad</strong><small>Mensajes persistentes</small></div>
-            <span class="node-state">ON</span>
-          </div>
-          <p class="map-caption">Una estructura visible. Cero contexto perdido entre sesiones.</p>
-        </aside>
+          <p class="graph-caption">Cada senal vuelve al mismo contexto operativo.</p>
+        </figure>
       </section>
 
       <section class="system-section" id="system">
@@ -518,85 +542,47 @@ function renderStaticAccessPanel() {
 
 function renderAuthPanel() {
   const loginActive = state.mode === 'login';
+  const activeForm = loginActive
+    ? `
+      <form class="auth-form" id="login-form">
+        <label>
+          <span>Correo</span>
+          <input name="email" type="email" maxlength="254" value="${escapeHtml(state.drafts.loginEmail)}" required autocomplete="username" />
+        </label>
+        <label>
+          <span>Contrasena</span>
+          <input name="password" type="password" minlength="10" maxlength="256" required autocomplete="current-password" />
+        </label>
+        <button class="button button-primary" type="submit">Entrar al workspace &rarr;</button>
+      </form>
+    `
+    : `
+      <form class="auth-form" id="register-form">
+        <label>
+          <span>Nombre</span>
+          <input name="name" type="text" maxlength="80" value="${escapeHtml(state.drafts.registerName)}" required autocomplete="name" />
+        </label>
+        <label>
+          <span>Correo</span>
+          <input name="email" type="email" maxlength="254" value="${escapeHtml(state.drafts.registerEmail)}" required autocomplete="email" />
+        </label>
+        <label>
+          <span>Contrasena</span>
+          <input name="password" type="password" minlength="10" maxlength="256" required autocomplete="new-password" />
+        </label>
+        <button class="button button-primary" type="submit">Crear cuenta &rarr;</button>
+      </form>
+    `;
+
   return `
     <aside class="auth-panel">
       <span class="panel-code">SECURE SESSION / HTTPONLY</span>
       <div class="tabs" aria-label="Opciones de acceso">
-        <button
-          class="tab ${loginActive ? 'active' : ''}"
-          id="tab-login"
-          type="button"
-          aria-pressed="${loginActive}"
-        >Ingresar</button>
-        <button
-          class="tab ${!loginActive ? 'active' : ''}"
-          id="tab-register"
-          type="button"
-          aria-pressed="${!loginActive}"
-        >Crear cuenta</button>
+        <button class="tab ${loginActive ? 'active' : ''}" id="tab-login" type="button" aria-pressed="${loginActive}">Ingresar</button>
+        <button class="tab ${!loginActive ? 'active' : ''}" id="tab-register" type="button" aria-pressed="${!loginActive}">Crear cuenta</button>
       </div>
       ${renderFeedback()}
-      <form class="auth-form" id="login-form" ${loginActive ? '' : 'hidden'}>
-        <label>
-          <span>Correo</span>
-          <input
-            name="email"
-            type="email"
-            maxlength="254"
-            value="${escapeHtml(state.drafts.loginEmail)}"
-            required
-            autocomplete="username"
-          />
-        </label>
-        <label>
-          <span>Contrasena</span>
-          <input
-            name="password"
-            type="password"
-            minlength="10"
-            maxlength="256"
-            required
-            autocomplete="current-password"
-          />
-        </label>
-        <button class="button button-primary" type="submit">Entrar al workspace →</button>
-      </form>
-      <form class="auth-form" id="register-form" ${loginActive ? 'hidden' : ''}>
-        <label>
-          <span>Nombre</span>
-          <input
-            name="name"
-            type="text"
-            maxlength="80"
-            value="${escapeHtml(state.drafts.registerName)}"
-            required
-            autocomplete="name"
-          />
-        </label>
-        <label>
-          <span>Correo</span>
-          <input
-            name="email"
-            type="email"
-            maxlength="254"
-            value="${escapeHtml(state.drafts.registerEmail)}"
-            required
-            autocomplete="email"
-          />
-        </label>
-        <label>
-          <span>Contrasena</span>
-          <input
-            name="password"
-            type="password"
-            minlength="10"
-            maxlength="256"
-            required
-            autocomplete="new-password"
-          />
-        </label>
-        <button class="button button-primary" type="submit">Crear cuenta →</button>
-      </form>
+      ${activeForm}
       <p class="form-note">Minimo 10 caracteres. Maximo 256.</p>
     </aside>
   `;
@@ -621,7 +607,7 @@ function renderDashboard() {
             <span class="list-index">A${String(agent.id).padStart(2, '0')}</span>
             <span class="list-copy">
               <strong>${escapeHtml(agent.name)}</strong>
-              <small>${escapeHtml(agent.model)} · ${escapeHtml(agent.instructions || 'Sin instrucciones')}</small>
+              <small>${escapeHtml(agent.model || 'Modelo sin definir')} · ${escapeHtml(agent.instructions || 'Sin instrucciones')}</small>
             </span>
           </button>
         </li>
@@ -952,14 +938,13 @@ function attachWorkspaceEvents() {
     const formData = new FormData(event.currentTarget);
     state.drafts.conversationTitle = String(formData.get('title') || '').trim();
     executeAction(async () => {
-      const conversation = await apiFetch('conversations', {
+      const payload = await apiFetch(`agents/${state.selectedAgentId}/conversations`, {
         method: 'POST',
         body: {
           title: state.drafts.conversationTitle,
-          agentId: state.selectedAgentId,
         },
       });
-      state.selectedConversationId = conversation.id;
+      state.selectedConversationId = payload.conversation.id;
       state.drafts.conversationTitle = '';
       await loadConversationsForAgent(state.selectedAgentId);
       setFeedback('Conversacion creada.', 'success');
