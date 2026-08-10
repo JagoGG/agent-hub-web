@@ -1,12 +1,13 @@
 {
   "name": "agent-hub-web",
+  "version": "1.19.0",
   "private": true,
-  "version": "1.18.0",
+  "description": "Directorio visual de agentes con portal estatico, backend local opcional y una composicion HyperFrames.",
   "type": "module",
-  "description": "Agent Hub web app with real user authentication and cross-device persistence.",
   "scripts": {
     "start": "node server.mjs",
-    "dev": "node --watch server.mjs"
+    "test": "node --test",
+    "check": "node --check app.js && node --check server.mjs && node --test"
   },
   "engines": {
     "node": ">=18.17"
