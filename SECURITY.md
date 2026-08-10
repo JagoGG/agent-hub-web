@@ -1,41 +1,23 @@
-# Política de seguridad — Agent Hub
+# Seguridad
 
-## Reporte de vulnerabilidades
+## Reportar un problema
 
-No publiques problemas sensibles en público. Usa:
+No publiques vulnerabilidades con datos sensibles en un issue abierto. Envia un reporte privado desde la pestana **Security** del repositorio e incluye impacto, pasos minimos para reproducir y una propuesta de mitigacion si la tienes.
 
-- https://github.com/JagoGG/agent-hub-web/security/advisories/new
+## Controles incluidos
 
-Incluye:
+- Contrasenas derivadas con PBKDF2-HMAC-SHA-512 y 220.000 iteraciones; los hashes antiguos se actualizan al iniciar sesion.
+- Tokens de sesion aleatorios almacenados como SHA-256 y enviados en cookies `HttpOnly` con `SameSite=Lax`.
+- Comparacion de hashes en tiempo constante.
+- Limites de tamano, longitud y frecuencia para solicitudes de API.
+- Validacion de `Origin`, `Sec-Fetch-Site`, tipos de contenido y propiedad de cada recurso.
+- Escrituras atomicas del archivo de datos; un JSON corrupto detiene el arranque y no se reemplaza.
+- Politica CSP estricta, encabezados de aislamiento, HSTS en produccion y lista permitida de archivos publicos.
 
-- impacto,
-- pasos para reproducir,
-- evidencia (capturas o request/response),
-- propuesta de corrección.
+## Despliegue
 
-## Controles implementados
-
-- Cabeceras de seguridad HTTP: `X-Content-Type-Options`, `X-Frame-Options`,
-  `Referrer-Policy`, `Permissions-Policy`, CSP básica y restricciones CSP para evitar ejecución externa.
-- Autenticación por sesión con token de cookie HttpOnly.
-- Tokens de sesión hasheados antes de persistir.
-- Password hashing con PBKDF2 + salt por usuario.
-- Rate limiting básico por identidad para `register`, `login` y envío de mensajes.
-- Aislamiento por `userId` en todas las rutas de `/api/agents` y `/api/conversations`.
-- `404` y APIs desconocidas devuelven respuestas controladas (sin detalles del sistema).
-
-## Riesgos conocidos
-
-- Base de datos actual en JSON local sin cifrado en reposo.
-- No hay recuperación de contraseña todavía.
-- No hay verificación de correo.
-- No hay rotación automática de secretos ni protección CSRF completa.
-
-## Recomendación de hardening recomendado
-
-1. Reemplazar persistencia JSON por base de datos con backups cifrados.
-2. Agregar CSRF token por sesión y SameSite=Lax/Strict consistente según clientes móviles.
-3. Añadir auditoría de eventos de sesión (login, logout, cambios de contraseña).
-4. Revisar límites de tasa y bloquear por fingerprint adicional.
-5. Desplegar detrás de HTTPS obligatorio y HSTS.
-6. Añadir logging estructurado y alertas por abuso.
+- Usa HTTPS y `NODE_ENV=production` fuera del equipo local.
+- Activa `TRUST_PROXY=1` unicamente detras de un proxy controlado que reemplace `X-Forwarded-For` y `X-Forwarded-Proto`.
+- Guarda `DATA_FILE` en un volumen privado con copias de seguridad.
+- El almacenamiento JSON es adecuado para una instancia pequena. Para multiples procesos o alta concurrencia, migra a una base de datos transaccional.
+- GitHub Pages solo publica el portal estatico; no aloja la API ni datos privados.

@@ -1,7 +1,21 @@
 const appEl = document.getElementById('app');
 
+if (!appEl) {
+  throw new Error('No se encontro el contenedor principal de Agent Hub.');
+}
+
+const API_BASE = new URL('./api/', document.baseURI);
+const REPOSITORY_URL = 'https://github.com/JagoGG/agent-hub-web';
+const HYPERFRAMES_URL = 'https://github.com/heygen-com/hyperframes';
+const metaVersion =
+  document.querySelector('meta[name="app-version"]')?.getAttribute('content') || '1.19.0';
+
 const state = {
   loading: true,
+  busy: false,
+  fatalError: '',
+  backendAvailable: null,
+  backendIssue: '',
   mode: 'login',
   user: null,
   agents: [],
@@ -9,18 +23,30 @@ const state = {
   messages: [],
   selectedAgentId: null,
   selectedConversationId: null,
-  appVersion: 'v1.18.0',
+  appVersion: normalizeVersion(metaVersion),
   appStartedAt: '',
-  feedback: '',
+  feedback: null,
+  drafts: {
+    loginEmail: '',
+    registerName: '',
+    registerEmail: '',
+    agentName: '',
+    agentModel: 'gpt-4o-mini',
+    agentInstructions: '',
+    conversationTitle: '',
+    messageContent: '',
+  },
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-  boot().catch((error) => {
-    state.feedback = error.message || 'No se pudo iniciar la aplicación';
-    state.loading = false;
-    render();
-  });
-});
+let playerDefinitionTimer = null;
+
+class ApiError extends Error {
+  constructor(message, status = 0) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -31,35 +57,29 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function setLoading(next) {
-  state.loading = next;
-  render();
+function normalizeVersion(value) {
+  return String(value || 'desconocida')
+    .trim()
+    .replace(/^v/i, '');
 }
 
-function setFeedback(message, kind = 'error') {
-  state.feedback = message ? `${kind}:${message}` : '';
-  render();
+function formatVersion(value) {
+  const version = normalizeVersion(value);
+  return version === 'desconocida' ? version : `v${version}`;
 }
 
-function parseFeedback() {
-  if (!state.feedback) return '';
-  const idx = state.feedback.indexOf(':');
-  if (idx < 0) return '';
-  const kind = state.feedback.slice(0, idx);
-  const text = state.feedback.slice(idx + 1);
-  return `<div class="feedback ${kind}">${escapeHtml(text)}</div>`;
+function normalizeMessageRole(value) {
+  const role = String(value || '').toLowerCase();
+  return role === 'assistant' || role === 'system' || role === 'user' ? role : 'user';
 }
 
 function toDate(value) {
-  try {
-    const d = new Date(value);
-    return d.toLocaleString('es-ES', {
-      dateStyle: 'short',
-      timeStyle: 'short',
-    });
-  } catch {
-    return '';
-  }
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return '';
+  return date.toLocaleString('es-ES', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  });
 }
 
 function selectedAgent() {
@@ -67,69 +87,150 @@ function selectedAgent() {
 }
 
 function selectedConversation() {
-  return state.conversations.find((conv) => conv.id === state.selectedConversationId) || null;
+  return (
+    state.conversations.find(
+      (conversation) => conversation.id === state.selectedConversationId,
+    ) || null
+  );
 }
 
-async function apiFetch(path, options = {}) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    credentials: 'include',
-    method: options.method || 'GET',
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-
-  const contentType = res.headers.get('content-type') || '';
-  const payload =
-    contentType.includes('application/json') ? await res.json() : { message: await res.text() };
-  if (!res.ok) throw new Error(payload.error || payload.message || `HTTP ${res.status}`);
-  return payload;
+function setFeedback(message, kind = 'error') {
+  state.feedback = message ? { kind, message: String(message) } : null;
 }
 
-async function boot() {
-  await hydrateAppInfo();
-  await hydrateSession();
-  setLoading(false);
+function renderFeedback() {
+  if (!state.feedback) return '';
+  const allowedKinds = new Set(['error', 'success', 'warning', 'info']);
+  const kind = allowedKinds.has(state.feedback.kind) ? state.feedback.kind : 'info';
+  return `
+    <div class="feedback ${kind}" role="${kind === 'error' ? 'alert' : 'status'}">
+      <span class="feedback-mark" aria-hidden="true"></span>
+      <p>${escapeHtml(state.feedback.message)}</p>
+    </div>
+  `;
+}
+
+async function apiFetch(endpoint, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs || 7000);
+  const headers = {
+    Accept: 'application/json',
+    ...(options.headers || {}),
+  };
+
+  if (options.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  try {
+    const response = await fetch(
+      new URL(String(endpoint).replace(/^\/+/, ''), API_BASE),
+      {
+        method,
+        headers,
+        credentials: 'include',
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        signal: controller.signal,
+      },
+    );
+
+    const contentType = response.headers.get('content-type') || '';
+    let payload = null;
+    if (contentType.includes('application/json')) {
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+    }
+
+    if (!response.ok) {
+      const message =
+        payload?.error ||
+        payload?.message ||
+        (response.status === 404
+          ? 'El servicio solicitado no esta disponible.'
+          : `Error HTTP ${response.status}`);
+      throw new ApiError(message, response.status);
+    }
+
+    return payload;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new ApiError('El servidor tardo demasiado en responder.');
+    }
+    if (error instanceof ApiError) throw error;
+    throw new ApiError('No se pudo conectar con el servidor de Agent Hub.');
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 async function hydrateAppInfo() {
   try {
-    const info = await apiFetch('/api/version');
-    const version = String(info.version || state.appVersion || 'desconocido');
-    state.appVersion = version.toLowerCase().startsWith('v') ? version : `v${version}`;
-    state.appStartedAt = String(info.startedAt || '');
-  } catch {
-    state.appVersion = 'desconocido';
+    const info = await apiFetch('version', { timeoutMs: 4500 });
+    state.backendAvailable = true;
+    state.backendIssue = '';
+    state.appVersion = normalizeVersion(info?.version || state.appVersion);
+    state.appStartedAt = String(info?.startedAt || '');
+    return true;
+  } catch (error) {
+    state.backendAvailable = false;
+    state.backendIssue = error.message;
+    return false;
   }
+}
+
+function clearSessionState() {
+  state.user = null;
+  state.agents = [];
+  state.conversations = [];
+  state.messages = [];
+  state.selectedAgentId = null;
+  state.selectedConversationId = null;
 }
 
 async function hydrateSession() {
   try {
-    const me = await apiFetch('/api/me');
-    state.user = me.user;
-    state.feedback = '';
-    await Promise.all([loadAgents()]);
-    return;
-  } catch {
-    state.user = null;
-    state.agents = [];
-    state.conversations = [];
-    state.messages = [];
-    state.selectedAgentId = null;
-    state.selectedConversationId = null;
+    const payload = await apiFetch('me');
+    state.user = payload.user;
+    await loadAgents();
+  } catch (error) {
+    clearSessionState();
+    if (error.status !== 401) {
+      setFeedback('El servidor esta activo, pero no pudo recuperar la sesion.', 'warning');
+    }
   }
 }
 
 async function loadAgents() {
-  state.agents = await apiFetch('/api/agents');
-  state.selectedAgentId = state.agents[0]?.id || null;
-  if (state.selectedAgentId) await loadConversationsForAgent(state.selectedAgentId);
+  const previousAgentId = state.selectedAgentId;
+  const agents = await apiFetch('agents');
+  state.agents = Array.isArray(agents) ? agents : [];
+  state.selectedAgentId = state.agents.some((agent) => agent.id === previousAgentId)
+    ? previousAgentId
+    : state.agents[0]?.id || null;
+
+  if (state.selectedAgentId) {
+    await loadConversationsForAgent(state.selectedAgentId);
+  } else {
+    state.conversations = [];
+    state.messages = [];
+    state.selectedConversationId = null;
+  }
 }
 
 async function loadConversationsForAgent(agentId) {
-  state.conversations = await apiFetch(`/api/agents/${agentId}/conversations`);
-  if (!state.conversations.some((conv) => conv.id === state.selectedConversationId)) {
-    state.selectedConversationId = state.conversations[0]?.id || null;
-  }
+  const previousConversationId = state.selectedConversationId;
+  const conversations = await apiFetch(`agents/${agentId}/conversations`);
+  state.conversations = Array.isArray(conversations) ? conversations : [];
+  state.selectedConversationId = state.conversations.some(
+    (conversation) => conversation.id === previousConversationId,
+  )
+    ? previousConversationId
+    : state.conversations[0]?.id || null;
+
   if (state.selectedConversationId) {
     await loadMessages(state.selectedConversationId);
   } else {
@@ -138,348 +239,779 @@ async function loadConversationsForAgent(agentId) {
 }
 
 async function loadMessages(conversationId) {
-  const payload = await apiFetch(`/api/conversations/${conversationId}/messages`);
-  state.messages = payload.messages || [];
+  const payload = await apiFetch(`conversations/${conversationId}/messages`);
+  state.messages = Array.isArray(payload?.messages) ? payload.messages : [];
 }
 
-function render() {
-  if (state.loading) {
-    appEl.innerHTML = '<section class="card loading">Cargando...</section>';
-    return;
-  }
-
-  appEl.innerHTML = state.user ? renderDashboard() : renderAuth();
-  attachEvents();
+async function boot() {
+  const backendOnline = await hydrateAppInfo();
+  if (backendOnline) await hydrateSession();
+  state.loading = false;
+  render();
 }
 
-function renderAuth() {
-  const versionText = escapeHtml(state.appVersion);
+function startBoot() {
+  state.loading = true;
+  state.fatalError = '';
+  render();
+  boot().catch((error) => {
+    state.loading = false;
+    state.fatalError = error?.message || 'No se pudo iniciar Agent Hub.';
+    render();
+  });
+}
+
+function renderLoading() {
   return `
-    <section class="app-shell">
-      <section class="auth-wrap">
-        <article class="card">
-          <h1>Agent Hub</h1>
-          <div class="version-badge" aria-label="Versión">v${versionText}</div>
-          <p class="subtitle">Gestiona tus agentes y conversaciones desde cualquier dispositivo.</p>
-          <div class="tabs">
-            <button class="tab ${state.mode === 'login' ? 'active' : ''}" id="tab-login" type="button">Iniciar sesión</button>
-            <button class="tab ${state.mode === 'register' ? 'active' : ''}" id="tab-register" type="button">Crear cuenta</button>
-          </div>
-          ${parseFeedback()}
-          <form class="panel active" id="login-form" style="display:${state.mode === 'login' ? 'block' : 'none'}">
-            <label>Correo
-              <input name="email" type="email" required autocomplete="username" />
-            </label>
-            <label>Contraseña
-              <input name="password" type="password" minlength="10" required autocomplete="current-password" />
-            </label>
-            <button type="submit">Entrar</button>
-          </form>
-          <form class="panel" id="register-form" style="display:${state.mode === 'register' ? 'block' : 'none'}">
-            <label>Nombre
-              <input name="name" type="text" required />
-            </label>
-            <label>Correo
-              <input name="email" type="email" required autocomplete="email" />
-            </label>
-            <label>Contraseña
-              <input name="password" type="password" minlength="10" required autocomplete="new-password" />
-            </label>
-            <button type="submit">Crear cuenta</button>
-          </form>
-          <small>Contraseña mínima: 10 caracteres.</small>
-        </article>
+    <main class="status-page">
+      <section class="status-panel" aria-live="polite">
+        <span class="status-index">AH / BOOT</span>
+        <div class="loading-line" aria-hidden="true"><span></span></div>
+        <h1>Preparando Agent Hub</h1>
+        <p>Comprobando la experiencia publica y el servidor operativo.</p>
       </section>
+    </main>
+  `;
+}
+
+function renderFatalError() {
+  return `
+    <main class="status-page">
+      <section class="status-panel status-panel-error">
+        <span class="status-index">AH / ERROR</span>
+        <h1>No pudimos iniciar la interfaz</h1>
+        <p>${escapeHtml(state.fatalError)}</p>
+        <button class="button button-primary" id="retry-boot" type="button">
+          Intentar de nuevo
+        </button>
+      </section>
+    </main>
+  `;
+}
+
+function renderPortal() {
+  const backendOnline = state.backendAvailable === true;
+  const versionText = escapeHtml(formatVersion(state.appVersion));
+  const statusLabel = backendOnline ? 'Servidor operativo' : 'Preview publico';
+  const primaryHref = backendOnline ? '#access' : '#experience';
+  const primaryLabel = backendOnline ? 'Entrar al workspace' : 'Ver la experiencia';
+
+  return `
+    <main class="public-shell">
+      <header class="masthead">
+        <div class="site-width masthead-inner">
+          <a class="brand" href="./" aria-label="Agent Hub, inicio">
+            <img src="./brand/agent-hub-isotype.png" alt="" width="42" height="42" />
+            <span>
+              <strong>Agent Hub</strong>
+              <small>Continuity workspace</small>
+            </span>
+          </a>
+          <nav class="main-nav" aria-label="Navegacion principal">
+            <a href="#system">Sistema</a>
+            <a href="#experience">HyperFrames</a>
+            <a href="#access">Acceso</a>
+          </nav>
+          <a class="repo-link" href="${REPOSITORY_URL}" target="_blank" rel="noreferrer noopener">
+            GitHub <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </header>
+
+      <section class="hero site-width">
+        <div class="hero-copy">
+          <div class="hero-status">
+            <span class="status-light" aria-hidden="true"></span>
+            <span>${statusLabel}</span>
+            <span class="version-inline">${versionText}</span>
+          </div>
+          <p class="eyebrow">Agents / conversations / continuity</p>
+          <h1>Un centro de mando para agentes que <em>no empiezan de cero.</em></h1>
+          <p class="hero-lead">
+            Reune agentes, conversaciones y contexto operativo en una sola superficie.
+            La informacion permanece ordenada por usuario y lista para continuar.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="${primaryHref}">
+              ${primaryLabel}<span aria-hidden="true">→</span>
+            </a>
+            <a class="button button-secondary" href="#system">Explorar el sistema</a>
+          </div>
+          <dl class="hero-facts" aria-label="Capacidades principales">
+            <div><dt>01</dt><dd>Agentes aislados por usuario</dd></div>
+            <div><dt>02</dt><dd>Historial con continuidad</dd></div>
+            <div><dt>03</dt><dd>Interfaz movil y escritorio</dd></div>
+          </dl>
+        </div>
+
+        <aside class="system-map" aria-label="Mapa del flujo de Agent Hub">
+          <div class="map-header">
+            <span>LIVE SYSTEM MAP</span>
+            <span>03 NODES</span>
+          </div>
+          <div class="map-node map-node-agent">
+            <span class="node-index">01</span>
+            <div><strong>Agentes</strong><small>Modelo + instrucciones</small></div>
+            <span class="node-state">READY</span>
+          </div>
+          <div class="map-connector" aria-hidden="true"><span></span></div>
+          <div class="map-node map-node-conversation">
+            <span class="node-index">02</span>
+            <div><strong>Conversaciones</strong><small>Hilos por agente</small></div>
+            <span class="node-state">SYNC</span>
+          </div>
+          <div class="map-connector" aria-hidden="true"><span></span></div>
+          <div class="map-node map-node-memory">
+            <span class="node-index">03</span>
+            <div><strong>Continuidad</strong><small>Mensajes persistentes</small></div>
+            <span class="node-state">ON</span>
+          </div>
+          <p class="map-caption">Una estructura visible. Cero contexto perdido entre sesiones.</p>
+        </aside>
+      </section>
+
+      <section class="system-section" id="system">
+        <div class="site-width">
+          <header class="section-heading">
+            <span class="section-number">01</span>
+            <div>
+              <p class="eyebrow">Arquitectura de continuidad</p>
+              <h2>Menos reinicios. Mas trabajo conectado.</h2>
+            </div>
+          </header>
+          <div class="capability-index">
+            <article>
+              <span class="capability-number">01</span>
+              <h3>Agentes con identidad</h3>
+              <p>Nombre, modelo e instrucciones permanecen juntos y bajo la cuenta correcta.</p>
+              <span class="capability-tag">IDENTITY</span>
+            </article>
+            <article>
+              <span class="capability-number">02</span>
+              <h3>Conversaciones legibles</h3>
+              <p>Cada hilo conserva su agente, sus mensajes y el orden temporal de trabajo.</p>
+              <span class="capability-tag">THREADS</span>
+            </article>
+            <article>
+              <span class="capability-number">03</span>
+              <h3>Persistencia defensiva</h3>
+              <p>Las escrituras del servidor se realizan de forma atomica para proteger el estado.</p>
+              <span class="capability-tag">STATE</span>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="continuity-band" aria-label="Flujo resumido">
+        <div class="site-width continuity-track">
+          <span>DEFINE</span><i aria-hidden="true"></i>
+          <span>CONVERSA</span><i aria-hidden="true"></i>
+          <span>CONSERVA</span><i aria-hidden="true"></i>
+          <span>CONTINUA</span>
+        </div>
+      </section>
+
+      ${renderHyperframesSection()}
+      ${renderAccessSection(backendOnline)}
+
+      <footer class="site-footer">
+        <div class="site-width footer-inner">
+          <div class="footer-brand">
+            <img src="./brand/agent-hub-isotype.png" alt="" width="36" height="36" />
+            <div><strong>Agent Hub</strong><span>Built for continuous agent work.</span></div>
+          </div>
+          <p>Portal publico y servidor local en un mismo repositorio.</p>
+          <a href="${REPOSITORY_URL}" target="_blank" rel="noreferrer noopener">Ver codigo fuente ↗</a>
+        </div>
+      </footer>
+    </main>
+  `;
+}
+
+function renderHyperframesSection() {
+  return `
+    <section class="experience-section" id="experience">
+      <div class="site-width experience-grid">
+        <header class="section-heading experience-heading">
+          <span class="section-number">02</span>
+          <div>
+            <p class="eyebrow">Motion layer / HeyGen HyperFrames</p>
+            <h2>El flujo se entiende antes de leerlo.</h2>
+            <p>
+              Una composicion HTML controlable traduce agentes, conversaciones y continuidad
+              en una secuencia visual reproducible.
+            </p>
+            <a class="text-link" href="${HYPERFRAMES_URL}" target="_blank" rel="noreferrer noopener">
+              Conocer HyperFrames <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        </header>
+        <div class="player-frame">
+          <div class="player-chrome" aria-hidden="true">
+            <span>AGENT HUB / FLOW 01</span><span>08.0 SEC</span>
+          </div>
+          <hyperframes-player
+            id="agent-flow-player"
+            src="./assets/hyperframes-showcase.html"
+            width="1920"
+            height="1080"
+            controls
+            muted
+            audio-locked
+            style="display:block;width:100%;aspect-ratio:16/9"
+          >
+            <div class="player-fallback">
+              La composicion esta disponible en
+              <a href="./assets/hyperframes-showcase.html">modo HTML</a>.
+            </div>
+          </hyperframes-player>
+          <p class="player-status" id="player-status" aria-live="polite">
+            Reproduccion bajo demanda. Sin audio.
+          </p>
+        </div>
+      </div>
     </section>
   `;
 }
 
+function renderAccessSection(backendOnline) {
+  return `
+    <section class="access-section" id="access">
+      <div class="site-width access-grid">
+        <header class="section-heading access-heading">
+          <span class="section-number">03</span>
+          <div>
+            <p class="eyebrow">${backendOnline ? 'Servidor conectado' : 'Publicacion estatica'}</p>
+            <h2>${backendOnline ? 'Tu workspace esta listo.' : 'La vista publica esta activa.'}</h2>
+            <p>
+              ${backendOnline
+                ? 'Inicia sesion o crea una cuenta para gestionar agentes y conversaciones.'
+                : 'GitHub Pages muestra el producto a todo el mundo. Las cuentas requieren ejecutar el servidor Node, porque Pages no aloja bases de datos ni APIs.'}
+            </p>
+          </div>
+        </header>
+        ${backendOnline ? renderAuthPanel() : renderStaticAccessPanel()}
+      </div>
+    </section>
+  `;
+}
+
+function renderStaticAccessPanel() {
+  return `
+    <aside class="static-access" role="note">
+      <span class="panel-code">PUBLIC / ONLINE</span>
+      <h3>Preview sin formularios rotos</h3>
+      <p>
+        Esta pagina funciona de forma estatica y no simula registros. El modo operativo se
+        activa al iniciar <code>npm run start</code> en un servidor con almacenamiento persistente.
+      </p>
+      <div class="access-status-row">
+        <span><i aria-hidden="true"></i> GitHub Pages disponible</span>
+        <span>API no requerida</span>
+      </div>
+      <a class="button button-secondary" href="${REPOSITORY_URL}#ejecutar-localmente" target="_blank" rel="noreferrer noopener">
+        Ver instrucciones
+      </a>
+    </aside>
+  `;
+}
+
+function renderAuthPanel() {
+  const loginActive = state.mode === 'login';
+  return `
+    <aside class="auth-panel">
+      <span class="panel-code">SECURE SESSION / HTTPONLY</span>
+      <div class="tabs" aria-label="Opciones de acceso">
+        <button
+          class="tab ${loginActive ? 'active' : ''}"
+          id="tab-login"
+          type="button"
+          aria-pressed="${loginActive}"
+        >Ingresar</button>
+        <button
+          class="tab ${!loginActive ? 'active' : ''}"
+          id="tab-register"
+          type="button"
+          aria-pressed="${!loginActive}"
+        >Crear cuenta</button>
+      </div>
+      ${renderFeedback()}
+      <form class="auth-form" id="login-form" ${loginActive ? '' : 'hidden'}>
+        <label>
+          <span>Correo</span>
+          <input
+            name="email"
+            type="email"
+            maxlength="254"
+            value="${escapeHtml(state.drafts.loginEmail)}"
+            required
+            autocomplete="username"
+          />
+        </label>
+        <label>
+          <span>Contrasena</span>
+          <input
+            name="password"
+            type="password"
+            minlength="10"
+            maxlength="256"
+            required
+            autocomplete="current-password"
+          />
+        </label>
+        <button class="button button-primary" type="submit">Entrar al workspace →</button>
+      </form>
+      <form class="auth-form" id="register-form" ${loginActive ? 'hidden' : ''}>
+        <label>
+          <span>Nombre</span>
+          <input
+            name="name"
+            type="text"
+            maxlength="80"
+            value="${escapeHtml(state.drafts.registerName)}"
+            required
+            autocomplete="name"
+          />
+        </label>
+        <label>
+          <span>Correo</span>
+          <input
+            name="email"
+            type="email"
+            maxlength="254"
+            value="${escapeHtml(state.drafts.registerEmail)}"
+            required
+            autocomplete="email"
+          />
+        </label>
+        <label>
+          <span>Contrasena</span>
+          <input
+            name="password"
+            type="password"
+            minlength="10"
+            maxlength="256"
+            required
+            autocomplete="new-password"
+          />
+        </label>
+        <button class="button button-primary" type="submit">Crear cuenta →</button>
+      </form>
+      <p class="form-note">Minimo 10 caracteres. Maximo 256.</p>
+    </aside>
+  `;
+}
+
 function renderDashboard() {
-  const versionText = escapeHtml(state.appVersion);
+  const currentAgent = selectedAgent();
+  const currentConversation = selectedConversation();
+  const versionText = escapeHtml(formatVersion(state.appVersion));
+
   const agentMarkup = state.agents
     .map((agent) => {
-      const selected = agent.id === state.selectedAgentId ? ' selected' : '';
-      return `<li><button class="list-item${selected}" data-agent="${agent.id}">${escapeHtml(agent.name)}</button></li>`;
+      const selected = agent.id === state.selectedAgentId;
+      return `
+        <li>
+          <button
+            class="list-item ${selected ? 'selected' : ''}"
+            data-agent="${Number(agent.id)}"
+            type="button"
+            aria-current="${selected ? 'true' : 'false'}"
+          >
+            <span class="list-index">A${String(agent.id).padStart(2, '0')}</span>
+            <span class="list-copy">
+              <strong>${escapeHtml(agent.name)}</strong>
+              <small>${escapeHtml(agent.model)} · ${escapeHtml(agent.instructions || 'Sin instrucciones')}</small>
+            </span>
+          </button>
+        </li>
+      `;
     })
     .join('');
 
   const conversationMarkup = state.conversations
     .map((conversation) => {
-      const selected = conversation.id === state.selectedConversationId ? ' selected' : '';
-      return `<li><button class="list-item${selected}" data-conversation="${conversation.id}">${escapeHtml(
-        conversation.title,
-      )}<span>${conversation.messageCount} mensajes</span></button></li>`;
+      const selected = conversation.id === state.selectedConversationId;
+      return `
+        <li>
+          <button
+            class="list-item ${selected ? 'selected' : ''}"
+            data-conversation="${Number(conversation.id)}"
+            type="button"
+            aria-current="${selected ? 'true' : 'false'}"
+          >
+            <span class="list-index">C${String(conversation.id).padStart(2, '0')}</span>
+            <span class="list-copy">
+              <strong>${escapeHtml(conversation.title)}</strong>
+              <small>${Number(conversation.messageCount) || 0} mensajes</small>
+            </span>
+          </button>
+        </li>
+      `;
     })
     .join('');
 
   const messageMarkup = state.messages
-    .map(
-      (msg) => `
-    <li class="message ${msg.role}">
-      <strong>${escapeHtml(msg.role.toUpperCase())}:</strong>
-      <p>${escapeHtml(msg.content)}</p>
-      <time>${toDate(msg.createdAt)}</time>
-    </li>
-  `,
-    )
+    .map((message) => {
+      const role = normalizeMessageRole(message.role);
+      return `
+        <li class="message ${role}">
+          <header><strong>${escapeHtml(role.toUpperCase())}</strong><time>${escapeHtml(toDate(message.createdAt))}</time></header>
+          <p>${escapeHtml(message.content)}</p>
+        </li>
+      `;
+    })
     .join('');
 
-  const currentAgent = selectedAgent();
-  const currentConversation = selectedConversation();
-
   return `
-    <section class="app-shell">
-        <header class="topbar">
-          <div>
-            <h1>Agent Hub</h1>
-            <small>${escapeHtml(state.user.email)} · ${escapeHtml(state.user.name)} · v${versionText}</small>
-          </div>
-        <button id="logout-button" type="button">Cerrar sesión</button>
+    <main class="workspace-shell">
+      <header class="workspace-header">
+        <a class="brand" href="./" aria-label="Agent Hub, workspace">
+          <img src="./brand/agent-hub-isotype.png" alt="" width="42" height="42" />
+          <span><strong>Agent Hub</strong><small>Operational workspace</small></span>
+        </a>
+        <div class="workspace-identity">
+          <span class="online-mark"><i aria-hidden="true"></i> ONLINE</span>
+          <span>${escapeHtml(state.user.name || 'Usuario')}</span>
+          <small>${escapeHtml(state.user.email)}</small>
+        </div>
+        <div class="workspace-actions">
+          <span class="version-inline">${versionText}</span>
+          <button class="button button-secondary" id="logout-button" type="button">Cerrar sesion</button>
+        </div>
       </header>
 
-      <section class="grid">
-        <aside class="card side-panel">
-          <h2>Agentes</h2>
-          <form id="agent-form">
-            <label>Nombre del agente
-              <input name="name" maxlength="80" required />
+      <div class="workspace-feedback">${renderFeedback()}</div>
+
+      <section class="workspace-grid">
+        <aside class="workspace-panel agent-panel">
+          <header class="panel-heading">
+            <span>01 / AGENTS</span>
+            <strong>${state.agents.length}</strong>
+          </header>
+          <form class="compact-form" id="agent-form">
+            <label>
+              <span>Nombre del agente</span>
+              <input name="name" maxlength="80" value="${escapeHtml(state.drafts.agentName)}" required />
             </label>
-            <label>Modelo
-              <input name="model" maxlength="60" value="gpt-4o-mini" />
+            <label>
+              <span>Modelo</span>
+              <input name="model" maxlength="60" value="${escapeHtml(state.drafts.agentModel)}" required />
             </label>
-            <label>Instrucciones
-              <textarea name="instructions" maxlength="500" rows="3"></textarea>
+            <label>
+              <span>Instrucciones</span>
+              <textarea name="instructions" maxlength="2000" rows="3">${escapeHtml(state.drafts.agentInstructions)}</textarea>
             </label>
-            <button type="submit">Crear agente</button>
+            <button class="button button-primary" type="submit">Crear agente</button>
           </form>
-          <ul class="list">${agentMarkup || '<li class="empty">Sin agentes todavía.</li>'}</ul>
+          <ul class="data-list">
+            ${agentMarkup || '<li class="empty-state"><strong>Sin agentes</strong><span>Crea el primero para abrir un flujo.</span></li>'}
+          </ul>
         </aside>
 
-        <main class="card main-panel">
-          <h2>Conversaciones ${currentAgent ? `- ${escapeHtml(currentAgent.name)}` : ''}</h2>
-          ${state.selectedAgentId
-            ? `<form id="conversation-form">
-                 <label>Título
-                   <input name="title" required />
-                 </label>
-                 <button type="submit">Nueva conversación</button>
-               </form>
-               <ul class="list">${conversationMarkup || '<li class="empty">Sin conversaciones para este agente.</li>'}</ul>`
-            : '<p class="empty">Crea un agente para empezar.</p>'}
-        </main>
+        <section class="workspace-panel conversation-panel">
+          <header class="panel-heading">
+            <span>02 / THREADS</span>
+            <strong>${state.conversations.length}</strong>
+          </header>
+          ${currentAgent
+            ? `
+              <div class="active-context">
+                <span>AGENTE ACTIVO</span>
+                <strong>${escapeHtml(currentAgent.name)}</strong>
+              </div>
+              <form class="inline-form" id="conversation-form">
+                <label>
+                  <span>Nueva conversacion</span>
+                  <input name="title" maxlength="120" value="${escapeHtml(state.drafts.conversationTitle)}" required />
+                </label>
+                <button class="button button-primary" type="submit">Crear</button>
+              </form>
+              <ul class="data-list conversation-list">
+                ${conversationMarkup || '<li class="empty-state"><strong>Sin conversaciones</strong><span>Abre un hilo para este agente.</span></li>'}
+              </ul>
+            `
+            : '<div class="empty-state empty-panel"><strong>Selecciona el punto de partida</strong><span>Crea un agente para habilitar conversaciones.</span></div>'}
+        </section>
 
-        <section class="card message-panel">
-          <h2>${currentConversation ? escapeHtml(currentConversation.title) : 'Mensajes'}</h2>
-          ${currentConversation ? `<p class="meta">Agente: ${escapeHtml(currentAgent?.name || '')}</p>` : ''}
-          <ul class="message-list">${messageMarkup || '<li class="empty">Aún sin mensajes.</li>'}</ul>
+        <section class="workspace-panel message-panel">
+          <header class="panel-heading">
+            <span>03 / MESSAGES</span>
+            <strong>${state.messages.length}</strong>
+          </header>
           ${currentConversation
-            ? `<form id="message-form">
-                 <label>Mensaje
-                   <textarea name="content" rows="4" required></textarea>
-                 </label>
-                 <div class="row">
-                   <select name="role">
-                     <option value="user">Usuario</option>
-                     <option value="assistant">Asistente</option>
-                     <option value="system">Sistema</option>
-                   </select>
-                   <button type="submit">Enviar</button>
-                 </div>
-               </form>`
-            : ''}
+            ? `
+              <div class="active-context">
+                <span>CONVERSACION ACTIVA</span>
+                <strong>${escapeHtml(currentConversation.title)}</strong>
+              </div>
+              <ul class="message-list">
+                ${messageMarkup || '<li class="empty-state"><strong>Sin mensajes</strong><span>El contexto comenzara con tu primer mensaje.</span></li>'}
+              </ul>
+              <form class="message-form" id="message-form">
+                <label>
+                  <span>Mensaje</span>
+                  <textarea name="content" maxlength="4000" rows="4" required>${escapeHtml(state.drafts.messageContent)}</textarea>
+                </label>
+                <div class="message-actions">
+                  <label>
+                    <span>Rol</span>
+                    <select name="role">
+                      <option value="user">Usuario</option>
+                      <option value="assistant">Asistente</option>
+                      <option value="system">Sistema</option>
+                    </select>
+                  </label>
+                  <button class="button button-primary" type="submit">Guardar mensaje</button>
+                </div>
+              </form>
+            `
+            : '<div class="empty-state empty-panel"><strong>Contexto en espera</strong><span>Selecciona una conversacion para ver sus mensajes.</span></div>'}
         </section>
       </section>
-      ${parseFeedback()}
-    </section>
+
+      <footer class="workspace-trace">
+        <span>USER ${String(state.user.id).padStart(3, '0')}</span>
+        <span>AGENTS ${state.agents.length}</span>
+        <span>THREADS ${state.conversations.length}</span>
+        <span>MESSAGES ${state.messages.length}</span>
+      </footer>
+    </main>
   `;
 }
 
-function attachEvents() {
-  if (!state.user) {
-    const loginBtn = document.getElementById('tab-login');
-    const registerBtn = document.getElementById('tab-register');
-    if (loginBtn) {
-      loginBtn.onclick = () => {
-        state.mode = 'login';
-        state.feedback = '';
-        render();
-      };
-    }
-    if (registerBtn) {
-      registerBtn.onclick = () => {
-        state.mode = 'register';
-        state.feedback = '';
-        render();
-      };
-    }
-    const loginForm = document.getElementById('login-form');
-    const registerForm = document.getElementById('register-form');
+function setDomBusy(next) {
+  appEl.classList.toggle('is-busy', next);
+  appEl.setAttribute('aria-busy', String(next));
+  appEl
+    .querySelectorAll('button[type="submit"], [data-agent], [data-conversation]')
+    .forEach((control) => {
+      control.disabled = next;
+    });
+}
 
-    if (loginForm) {
-      loginForm.onsubmit = async (event) => {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const fd = new FormData(form);
-        setLoading(true);
-        try {
-          state.user = await apiFetch('/api/login', {
-            method: 'POST',
-            body: {
-              email: fd.get('email'),
-              password: fd.get('password'),
-            },
-          }).then((payload) => payload.user);
-          await hydrateSession();
-          state.feedback = '';
-          setLoading(false);
-        } catch (error) {
-          setFeedback(`error:${error.message}`);
-          setLoading(false);
-        }
-      };
-    }
-
-    if (registerForm) {
-      registerForm.onsubmit = async (event) => {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const fd = new FormData(form);
-        setLoading(true);
-        try {
-          state.user = await apiFetch('/api/register', {
-            method: 'POST',
-            body: {
-              name: fd.get('name'),
-              email: fd.get('email'),
-              password: fd.get('password'),
-            },
-          }).then((payload) => payload.user);
-          await hydrateSession();
-          state.feedback = '';
-          setLoading(false);
-        } catch (error) {
-          setFeedback(`error:${error.message}`);
-          setLoading(false);
-        }
-      };
-    }
-
-    return;
+async function executeAction(action) {
+  if (state.busy) return;
+  state.busy = true;
+  setDomBusy(true);
+  try {
+    await action();
+  } catch (error) {
+    setFeedback(error?.message || 'La operacion no pudo completarse.', 'error');
+  } finally {
+    state.busy = false;
+    render();
   }
+}
 
-  const logoutButton = document.getElementById('logout-button');
-  if (logoutButton) {
-    logoutButton.onclick = async () => {
-      setLoading(true);
-      try {
-        await apiFetch('/api/logout', { method: 'POST' });
-      } catch {
-        // no-op
-      } finally {
-        state.user = null;
-        state.feedback = '';
-        state.agents = [];
-        state.conversations = [];
-        state.messages = [];
-        state.selectedAgentId = null;
-        state.selectedConversationId = null;
-        setLoading(false);
+function attachPortalEvents() {
+  const loginTab = document.getElementById('tab-login');
+  const registerTab = document.getElementById('tab-register');
+  loginTab?.addEventListener('click', () => {
+    state.mode = 'login';
+    setFeedback('');
+    render();
+  });
+  registerTab?.addEventListener('click', () => {
+    state.mode = 'register';
+    setFeedback('');
+    render();
+  });
+
+  const loginForm = document.getElementById('login-form');
+  loginForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    state.drafts.loginEmail = String(formData.get('email') || '').trim();
+    executeAction(async () => {
+      const payload = await apiFetch('login', {
+        method: 'POST',
+        body: {
+          email: state.drafts.loginEmail,
+          password: formData.get('password'),
+        },
+      });
+      state.user = payload.user;
+      state.drafts.loginEmail = '';
+      setFeedback('');
+      await loadAgents();
+    });
+  });
+
+  const registerForm = document.getElementById('register-form');
+  registerForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    state.drafts.registerName = String(formData.get('name') || '').trim();
+    state.drafts.registerEmail = String(formData.get('email') || '').trim();
+    executeAction(async () => {
+      const payload = await apiFetch('register', {
+        method: 'POST',
+        body: {
+          name: state.drafts.registerName,
+          email: state.drafts.registerEmail,
+          password: formData.get('password'),
+        },
+      });
+      state.user = payload.user;
+      state.drafts.registerName = '';
+      state.drafts.registerEmail = '';
+      setFeedback('');
+      await loadAgents();
+    });
+  });
+
+  const player = document.getElementById('agent-flow-player');
+  const playerStatus = document.getElementById('player-status');
+  if (player && playerStatus) {
+    player.addEventListener('ready', (event) => {
+      const duration = Number(event.detail?.duration || 0);
+      playerStatus.textContent = duration
+        ? `Composicion lista: ${duration.toFixed(1)} segundos. Sin audio.`
+        : 'Composicion lista. Sin audio.';
+    });
+    player.addEventListener('error', () => {
+      playerStatus.textContent =
+        'El reproductor no pudo iniciar. Abre la composicion HTML desde el enlace alternativo.';
+      playerStatus.classList.add('error');
+    });
+
+    window.clearTimeout(playerDefinitionTimer);
+    playerDefinitionTimer = window.setTimeout(() => {
+      if (!window.customElements.get('hyperframes-player')) {
+        playerStatus.textContent =
+          'El reproductor externo no respondio. La composicion HTML sigue disponible.';
+        playerStatus.classList.add('error');
       }
-    };
+    }, 5000);
   }
+}
+
+function attachWorkspaceEvents() {
+  document.getElementById('logout-button')?.addEventListener('click', () => {
+    executeAction(async () => {
+      let logoutWarning = '';
+      try {
+        await apiFetch('logout', { method: 'POST', body: {} });
+      } catch {
+        logoutWarning = 'La sesion local se cerro, pero el servidor no confirmo la revocacion.';
+      }
+      clearSessionState();
+      setFeedback(logoutWarning, logoutWarning ? 'warning' : 'info');
+    });
+  });
 
   document.querySelectorAll('[data-agent]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      state.selectedConversationId = null;
-      state.messages = [];
-      state.selectedAgentId = Number(button.dataset.agent);
-      setLoading(true);
-      await loadConversationsForAgent(state.selectedAgentId);
-      setLoading(false);
+    button.addEventListener('click', () => {
+      executeAction(async () => {
+        state.selectedAgentId = Number(button.dataset.agent);
+        state.selectedConversationId = null;
+        state.messages = [];
+        setFeedback('');
+        await loadConversationsForAgent(state.selectedAgentId);
+      });
     });
   });
 
   document.querySelectorAll('[data-conversation]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      state.selectedConversationId = Number(button.dataset.conversation);
-      setLoading(true);
-      await loadMessages(state.selectedConversationId);
-      setLoading(false);
+    button.addEventListener('click', () => {
+      executeAction(async () => {
+        state.selectedConversationId = Number(button.dataset.conversation);
+        setFeedback('');
+        await loadMessages(state.selectedConversationId);
+      });
     });
   });
 
   const agentForm = document.getElementById('agent-form');
-  if (agentForm) {
-    agentForm.onsubmit = async (event) => {
-      event.preventDefault();
-      const fd = new FormData(event.currentTarget);
-      setLoading(true);
-      try {
-        await apiFetch('/api/agents', {
-          method: 'POST',
-          body: {
-            name: fd.get('name'),
-            model: fd.get('model'),
-            instructions: fd.get('instructions'),
-          },
-        });
-        await loadAgents();
-        setFeedback('success:Agente creado.');
-        setLoading(false);
-      } catch (error) {
-        setFeedback(`error:${error.message}`);
-        setLoading(false);
-      }
-    };
-  }
+  agentForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    state.drafts.agentName = String(formData.get('name') || '').trim();
+    state.drafts.agentModel = String(formData.get('model') || '').trim();
+    state.drafts.agentInstructions = String(formData.get('instructions') || '').trim();
+    executeAction(async () => {
+      await apiFetch('agents', {
+        method: 'POST',
+        body: {
+          name: state.drafts.agentName,
+          model: state.drafts.agentModel,
+          instructions: state.drafts.agentInstructions,
+        },
+      });
+      state.drafts.agentName = '';
+      state.drafts.agentInstructions = '';
+      await loadAgents();
+      setFeedback('Agente creado correctamente.', 'success');
+    });
+  });
 
   const conversationForm = document.getElementById('conversation-form');
-  if (conversationForm && state.selectedAgentId) {
-    conversationForm.onsubmit = async (event) => {
-      event.preventDefault();
-      const fd = new FormData(event.currentTarget);
-      setLoading(true);
-      try {
-        const conv = await apiFetch('/api/conversations', {
-          method: 'POST',
-          body: { title: fd.get('title'), agentId: state.selectedAgentId },
-        });
-        state.selectedConversationId = conv.id;
-        await loadConversationsForAgent(state.selectedAgentId);
-        setFeedback('success:Conversación creada.');
-        setLoading(false);
-      } catch (error) {
-        setFeedback(`error:${error.message}`);
-        setLoading(false);
-      }
-    };
-  }
+  conversationForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    state.drafts.conversationTitle = String(formData.get('title') || '').trim();
+    executeAction(async () => {
+      const conversation = await apiFetch('conversations', {
+        method: 'POST',
+        body: {
+          title: state.drafts.conversationTitle,
+          agentId: state.selectedAgentId,
+        },
+      });
+      state.selectedConversationId = conversation.id;
+      state.drafts.conversationTitle = '';
+      await loadConversationsForAgent(state.selectedAgentId);
+      setFeedback('Conversacion creada.', 'success');
+    });
+  });
 
   const messageForm = document.getElementById('message-form');
-  if (messageForm && state.selectedConversationId) {
-    messageForm.onsubmit = async (event) => {
-      event.preventDefault();
-      const fd = new FormData(event.currentTarget);
-      const content = String(fd.get('content') || '').trim();
-      const role = fd.get('role');
-      if (!content) return;
-      setLoading(true);
-      try {
-        await apiFetch(`/api/conversations/${state.selectedConversationId}/messages`, {
-          method: 'POST',
-          body: { role, content },
-        });
-        event.currentTarget.reset();
-        await loadConversationsForAgent(state.selectedAgentId);
-        setLoading(false);
-      } catch (error) {
-        setFeedback(`error:${error.message}`);
-        setLoading(false);
-      }
-    };
-  }
-
-  state.feedback = '';
+  messageForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    state.drafts.messageContent = String(formData.get('content') || '').trim();
+    if (!state.drafts.messageContent) {
+      setFeedback('El mensaje no puede estar vacio.', 'error');
+      render();
+      return;
+    }
+    executeAction(async () => {
+      await apiFetch(`conversations/${state.selectedConversationId}/messages`, {
+        method: 'POST',
+        body: {
+          role: formData.get('role'),
+          content: state.drafts.messageContent,
+        },
+      });
+      state.drafts.messageContent = '';
+      await loadConversationsForAgent(state.selectedAgentId);
+      setFeedback('Mensaje guardado.', 'success');
+    });
+  });
 }
 
-render();
+function attachEvents() {
+  document.getElementById('retry-boot')?.addEventListener('click', startBoot);
+  if (state.loading || state.fatalError) return;
+  if (state.user) {
+    attachWorkspaceEvents();
+  } else {
+    attachPortalEvents();
+  }
+}
+
+function render() {
+  if (state.loading) {
+    appEl.innerHTML = renderLoading();
+  } else if (state.fatalError) {
+    appEl.innerHTML = renderFatalError();
+  } else if (state.user) {
+    appEl.innerHTML = renderDashboard();
+  } else {
+    appEl.innerHTML = renderPortal();
+  }
+  attachEvents();
+}
+
+startBoot();

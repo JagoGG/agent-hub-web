@@ -1,89 +1,60 @@
-# Agent Hub Web
+# Agent Hub
 
-Portal operativo para gestionar agentes, conversaciones y sesiones por usuario.
+Agent Hub es un directorio visual de agentes con dos modos de uso:
 
-## Qué resuelve esta versión
+- **Portal publico:** GitHub Pages sirve una experiencia de exploracion estatica en `https://jagogg.github.io/agent-hub-web/`.
+- **Aplicacion completa:** el servidor Node habilita cuentas, agentes, conversaciones y mensajes con persistencia local.
 
-- Registro e inicio de sesión con contraseña.
-- Persistencia por usuario en base local JSON (`data/db.json`), compartible entre dispositivos que usen el mismo servidor.
-- CRUD de agentes por usuario.
-- CRUD de conversaciones por agente.
-- Persistencia de mensajes.
-- Guardado de sesión con cookie HttpOnly.
-
-## Requisitos
-
-- Node.js 18.17+.
-- Un terminal con permisos de escritura en este repositorio.
+La portada incluye una composicion controlable de HyperFrames que presenta el catalogo como un mapa operativo, no como un video decorativo independiente.
 
 ## Ejecutar localmente
 
-1. Instala dependencias (no hay dependencias externas, solo runtime de Node):
-   ```bash
-   npm install
-   ```
-2. Inicia el servidor:
-   ```bash
-   npm run start
-   ```
-3. Abre `http://localhost:3000`.
+Requiere Node.js 18.17 o superior.
 
-## Endpoints de API
+```bash
+npm start
+```
 
-### Salud
+Abre `http://localhost:5173`. Si el backend no esta disponible, la interfaz cambia automaticamente al portal publico y nunca queda atrapada en una pantalla de carga.
+
+## Verificar
+
+```bash
+npm test
+npm run check
+```
+
+Las pruebas cubren el contrato estatico, autenticacion, aislamiento entre cuentas, rutas protegidas, tipos MIME, solicitudes `HEAD` y proteccion ante un archivo de datos corrupto.
+
+## Variables de entorno
+
+| Variable | Predeterminado | Uso |
+| --- | --- | --- |
+| `HOST` | `0.0.0.0` | Interfaz donde escucha el servidor. |
+| `PORT` | `5173` | Puerto HTTP. Usa `0` para uno disponible automaticamente. |
+| `DATA_FILE` | `data/db.json` | Ruta del archivo JSON persistente. |
+| `NODE_ENV` | vacio | Usa `production` para cookies seguras y HSTS. |
+| `TRUST_PROXY` | `0` | Usa `1` solo detras de un proxy propio que limpie encabezados reenviados. |
+
+## API local
+
+- `GET /api/version`
 - `GET /api/health`
-
-### Auth
 - `POST /api/register`
 - `POST /api/login`
 - `POST /api/logout`
 - `GET /api/me`
+- `GET|POST /api/agents`
+- `PUT|DELETE /api/agents/:id`
+- `GET|POST /api/agents/:id/conversations`
+- `DELETE /api/conversations/:id`
+- `GET|POST /api/conversations/:id/messages`
 
-### Agentes
-- `GET /api/agents`
-- `POST /api/agents`
-- `PATCH /api/agents/:agentId`
-- `DELETE /api/agents/:agentId`
-- `GET /api/agents/:agentId/conversations`
+GitHub Pages no ejecuta Node ni guarda cuentas. Para publicar el modo completo se necesita un host de aplicaciones con almacenamiento persistente.
 
-### Conversaciones
-- `GET /api/conversations?agentId=:agentId`
-- `POST /api/conversations`
-- `GET /api/conversations/:conversationId`
-- `PATCH /api/conversations/:conversationId`
-- `DELETE /api/conversations/:conversationId`
-- `GET /api/conversations/:conversationId/messages`
-- `POST /api/conversations/:conversationId/messages`
+## Estructura principal
 
-## Estructura de almacenamiento
-
-Por defecto se guarda en `data/db.json` con tablas lógicas:
-
-- `users`
-- `sessions`
-- `agents`
-- `conversations`
-- `messages`
-
-Cada sesión se guarda con hash de token y expiración de 14 días.
-
-## Notas de seguridad mínimas activas
-
-- Cookies HttpOnly, SameSite=Strict.
-- Límite de tasa básico en login/registro/mensajes.
-- Hash de contraseña con PBKDF2 (salt único por usuario).
-- Cabeceras de hardening en respuestas HTTP.
-- Aislamiento por `userId` en todas las rutas protegidas.
-
-## Pendientes de mejora crítica
-
-- Migrar almacenamiento de JSON a base de datos real (PostgreSQL o SQLite con migraciones).
-- Integración de correo de verificación y recuperación de contraseña.
-- Cifrado en reposo de datos sensibles.
-- Rotación y revocación proactiva de sesiones.
-- Protección CSRF y doble-factor opcional.
-- Auditoría y registros de evento firmados.
-
-## Nota sobre compatibilidad
-
-Las rutas absolutas que existían en el snapshot anterior (`/agent-hub-web/...`) fueron eliminadas para evitar roturas de despliegue en rutas personalizadas.
+- `index.html`, `styles.css`, `app.js`: portal y aplicacion web.
+- `assets/hyperframes-showcase.*`: composicion, estilos y timeline de HyperFrames.
+- `server.mjs`: API y servidor estatico sin dependencias externas.
+- `tests/server.test.mjs`: pruebas de contrato e integracion.

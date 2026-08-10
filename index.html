@@ -4,17 +4,45 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="no-referrer" />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="theme-color" content="#06101c" />
+    <meta name="app-version" content="1.19.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-src 'self'; connect-src 'self'"
+    />
     <meta
       name="description"
-      content="Agent Hub - Registro y persistencia de agentes y conversaciones por usuario."
+      content="Agent Hub organiza agentes, conversaciones y continuidad en un portal publico y un workspace operativo."
     />
-    <link rel="icon" type="image/png" href="/brand/agent-hub-isotype.png" />
-    <title>Agent Hub</title>
-    <link rel="stylesheet" href="/styles.css?v=__APP_VERSION__" />
+    <link rel="canonical" href="https://jagogg.github.io/agent-hub-web/" />
+    <link rel="icon" type="image/png" href="./brand/agent-hub-isotype.png" />
+    <link rel="stylesheet" href="./styles.css?v=1.19.0" />
+    <script
+      defer
+      type="module"
+      src="https://cdn.jsdelivr.net/npm/@hyperframes/player@0.7.76"
+    ></script>
+    <title>Agent Hub - Tu centro de agentes</title>
   </head>
   <body>
-    <main id="app">Cargando...</main>
-    <script type="module" src="/app.js?v=__APP_VERSION__"></script>
+    <div id="app">
+      <main class="status-page">
+        <section class="status-panel" aria-live="polite">
+          <span class="status-index">AH / BOOT</span>
+          <div class="loading-line" aria-hidden="true"><span></span></div>
+          <h1>Preparando Agent Hub</h1>
+          <p>Comprobando la experiencia publica y el servidor operativo.</p>
+        </section>
+      </main>
+    </div>
+    <noscript>
+      <div class="not-found-page">
+        <section class="not-found-card">
+          <h1>JavaScript es necesario.</h1>
+          <p>Activalo para explorar Agent Hub y su composicion HyperFrames.</p>
+        </section>
+      </div>
+    </noscript>
+    <script type="module" src="./app.js?v=1.19.0"></script>
   </body>
 </html>

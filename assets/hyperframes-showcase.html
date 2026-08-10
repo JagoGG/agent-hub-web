@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Hub Signal Atlas</title>
+    <link rel="stylesheet" href="./hyperframes-showcase.css" />
+  </head>
+  <body>
+    <main
+      class="composition"
+      data-composition-id="agent-hub-showcase"
+      data-composition-width="1280"
+      data-composition-height="720"
+      data-composition-duration="12"
+      aria-label="Vista animada del directorio Agent Hub"
+    >
+      <div class="grid" aria-hidden="true"></div>
+      <div class="scanline" aria-hidden="true"></div>
+
+      <header class="hud" data-clip-id="hud" data-start-time="0" data-end-time="12">
+        <span>AGENT HUB / SIGNAL ATLAS</span>
+        <span class="live"><i></i> RED ABIERTA</span>
+        <span>12.0 SEC</span>
+      </header>
+
+      <section class="frame frame-intro" data-clip-id="intro" data-start-time="0" data-end-time="4.2">
+        <p class="eyebrow">DIRECTORIO OPERATIVO 01</p>
+        <h1>Encuentra la<br /><em>inteligencia</em><br />correcta.</h1>
+        <p class="lede">Un mapa vivo para descubrir agentes, entender sus capacidades y activar el siguiente flujo.</p>
+        <div class="orbit orbit-one" aria-hidden="true"></div>
+        <div class="orbit orbit-two" aria-hidden="true"></div>
+        <div class="core" aria-hidden="true">AH</div>
+      </section>
+
+      <section class="frame frame-network" data-clip-id="network" data-start-time="3.5" data-end-time="8.3">
+        <p class="eyebrow">CARTOGRAFIA DE CAPACIDADES</p>
+        <h2>Senales que<br />se conectan.</h2>
+        <div class="network" aria-label="Red de agentes especializados">
+          <article class="node node-main"><strong>ORQUESTADOR</strong><span>coordina 08 flujos</span></article>
+          <article class="node node-a"><strong>RESEARCH</strong><span>evidencia</span></article>
+          <article class="node node-b"><strong>VIDEO</strong><span>HeyGen</span></article>
+          <article class="node node-c"><strong>CODE</strong><span>entrega</span></article>
+          <article class="node node-d"><strong>OPS</strong><span>automatiza</span></article>
+          <svg viewBox="0 0 700 390" role="presentation">
+            <path d="M350 195 L106 73 M350 195 L594 65 M350 195 L620 317 M350 195 L98 322" />
+          </svg>
+        </div>
+      </section>
+
+      <section class="frame frame-outro" data-clip-id="outro" data-start-time="7.6" data-end-time="12">
+        <p class="eyebrow">LISTO PARA DESPLEGAR</p>
+        <div class="outro-lockup">
+          <div class="mark">AH</div>
+          <div>
+            <h2>Agent Hub</h2>
+            <p>Descubre. Conecta. Ejecuta.</p>
+          </div>
+        </div>
+        <div class="command"><span>agent-hub /</span> explorar_catalogo <b>↗</b></div>
+      </section>
+
+      <footer class="timeline" data-clip-id="timeline" data-start-time="0" data-end-time="12">
+        <span>00</span><i></i><span>04</span><i></i><span>08</span><i></i><span>12</span>
+      </footer>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="./hyperframes-showcase.js"></script>
+  </body>
+</html>
