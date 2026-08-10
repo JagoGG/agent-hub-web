@@ -1,0 +1,75 @@
+.boot-recovery {
+  width: min(680px, calc(100% - 40px));
+  margin: clamp(72px, 14vh, 150px) auto;
+  padding: clamp(30px, 6vw, 58px);
+  color: #f5f7ff;
+  background:
+    linear-gradient(145deg, rgba(25, 210, 179, 0.12), transparent 44%),
+    #11182b;
+  border: 1px solid rgba(155, 175, 224, 0.26);
+  border-radius: 22px;
+  box-shadow: 0 28px 90px rgba(2, 6, 18, 0.42);
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+}
+
+.boot-recovery__eyebrow {
+  display: block;
+  margin-bottom: 18px;
+  color: #20dec0;
+  font: 700 0.74rem/1.2 "IBM Plex Mono", Consolas, monospace;
+  letter-spacing: 0.16em;
+}
+
+.boot-recovery__title {
+  max-width: 560px;
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 4.2rem);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.boot-recovery__copy {
+  max-width: 570px;
+  margin: 24px 0 0;
+  color: #b8c3df;
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.boot-recovery__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+.boot-recovery__button,
+.boot-recovery__link {
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
+  border-radius: 999px;
+  font: 700 0.9rem/1 "Space Grotesk", "Segoe UI", sans-serif;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.boot-recovery__button {
+  color: #061512;
+  background: #20dec0;
+  border: 1px solid #20dec0;
+}
+
+.boot-recovery__link {
+  color: #eef3ff;
+  background: transparent;
+  border: 1px solid rgba(192, 207, 244, 0.4);
+}
+
+.boot-recovery__button:focus-visible,
+.boot-recovery__link:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 4px;
+}

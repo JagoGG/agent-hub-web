@@ -1,2 +1,27 @@
 /data/
 /node_modules/
+
+# Public repository safety
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.db
+*.sqlite
+*.sqlite3
+*.log
+.data/
+data/
+storage/
+credentials.json
+cookies.json
+secrets.json
+.npmrc
+.pypirc
