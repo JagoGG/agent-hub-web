@@ -1,13 +1,15 @@
 {
   "name": "agent-hub-web",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "private": true,
   "description": "Directorio visual de agentes con portal estatico, backend local opcional y una composicion HyperFrames.",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test",
-    "check": "node --check app.js && node --check server.mjs && node --test"
+    "check": "node --check app.js && node --check server.mjs && node --check boot-guard.js && node --test",
+    "security": "node scripts/public-safety.mjs",
+    "verify": "npm run check && npm run security && npm audit --audit-level=high"
   },
   "engines": {
     "node": ">=18.17"

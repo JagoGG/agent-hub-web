@@ -8,7 +8,7 @@ const API_BASE = new URL('./api/', document.baseURI);
 const REPOSITORY_URL = 'https://github.com/JagoGG/agent-hub-web';
 const HYPERFRAMES_URL = 'https://github.com/heygen-com/hyperframes';
 const metaVersion =
-  document.querySelector('meta[name="app-version"]')?.getAttribute('content') || '1.20.0';
+  document.querySelector('meta[name="app-version"]')?.getAttribute('content') || '1.21.0';
 
 const state = {
   loading: true,
